@@ -6,14 +6,19 @@ import asyncio
 import logging
 
 from trueconf import Bot
-from trueconf.enums import ChatParticipantRole
+from trueconf.enums import ChatParticipantRole, ChatType
 
 logger = logging.getLogger(__name__)
 
-# Roles that grant permission to create and revoke webhooks when admin-only mode
-# is on. In TrueConf the "admin" roles are the chat owner and explicit admins.
+# Roles that grant permission to create and revoke webhooks in GROUP/CHANNEL chats.
 _ADMIN_ROLES: frozenset[ChatParticipantRole] = frozenset(
     {ChatParticipantRole.OWNER, ChatParticipantRole.ADMIN}
+)
+
+# Chat types where admin-only enforcement does not make sense: the user is
+# effectively the sole owner of such a chat and there is no moderation hierarchy.
+_PERSONAL_CHAT_TYPES: frozenset[int] = frozenset(
+    {int(ChatType.P2P), int(ChatType.FAVORITES)}
 )
 
 # Pagination page size when scanning chat participants. Comfortable for typical
@@ -22,23 +27,28 @@ _ADMIN_ROLES: frozenset[ChatParticipantRole] = frozenset(
 _PAGE_SIZE: int = 200
 
 
-async def is_admin(bot: Bot, chat_id: str, user_id: str) -> bool:
-    """Return True if the user has an OWNER or ADMIN role in the given chat.
+async def can_manage_webhooks(bot: Bot, chat_id: str, user_id: str) -> bool:
+    """Return True if the user is allowed to create/revoke webhooks in this chat.
 
-    Pagination is walked until the first match or an empty page. TrueConf may
-    return identifiers with or without a domain (`user` vs `user@server`), so
-    comparison is done against the local part only.
+    Rules:
+    - For personal (P2P) and favorites chats, any participant is allowed — there
+      is no moderation hierarchy in these chats.
+    - For groups and channels, only OWNER or ADMIN roles are allowed.
 
-    Args:
-        bot: `Bot` instance (typically from `BotHolder`).
-        chat_id: chat identifier.
-        user_id: id of the user who invoked the command.
-
-    Returns: True if the role is admin-equivalent, otherwise False.
-
-    Side effects: on network/API errors the function logs a warning and returns
-    False (fail-closed — do not grant privileges when the state is unknown).
+    On network/API errors the function returns False (fail-closed: do not
+    grant privileges when the state is unknown).
     """
+    try:
+        chat = await bot.get_chat_by_id(chat_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("Failed to resolve chat type for %s: %s", chat_id, exc)
+        return False
+
+    if getattr(chat, "chat_type", None) in _PERSONAL_CHAT_TYPES:
+        return True
+
     target = _local_part(user_id)
     page = 1
     try:

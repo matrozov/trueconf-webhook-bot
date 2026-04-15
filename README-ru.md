@@ -10,6 +10,8 @@ Incoming webhook bot для чатов TrueConf Server. Внутри чата м
 ## Возможности
 
 - Команды `/webhook_create`, `/webhook_list`, `/webhook_revoke` прямо в чате.
+  В групповых чатах и каналах команду нужно адресовать боту (`@bot /webhook_list`);
+  в личных чатах и «Избранных» упоминание необязательно.
 - Полный URL доставляется в личные сообщения инициатору, чтобы не светить секрет
   в групповом чате.
 - В `/webhook_list` токены показываются с маской (`abcd…wxyz`).
@@ -60,6 +62,7 @@ python -m trueconf_webhook_bot
 | `TRUECONF_SERVER` | да | — |
 | `TRUECONF_TOKEN` | одна из авторизаций | — |
 | `TRUECONF_USERNAME` + `TRUECONF_PASSWORD` | одна из авторизаций | — |
+| `TRUECONF_HTTPS` | нет | `true` |
 | `TRUECONF_VERIFY_SSL` | нет | `true` |
 | `TRUECONF_WEB_PORT` | нет | `443` |
 | `WEBHOOK_PUBLIC_URL` | да | — |

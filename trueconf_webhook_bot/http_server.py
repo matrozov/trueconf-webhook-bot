@@ -18,7 +18,9 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from aiohttp import web
 from trueconf import Bot
@@ -50,9 +52,14 @@ class HttpLimits:
 
 @dataclass
 class _Attachments:
-    """Intermediate representation of the attachments to send."""
+    """Intermediate representation of the attachments to send.
 
-    images: list[InputFile]
+    Each image is a `(file, preview)` pair. For now both point at the same
+    payload — TrueConf clients render photos inline only when a preview is
+    attached. See CLAUDE.md for the planned upgrade to real thumbnails.
+    """
+
+    images: list[tuple[InputFile, InputFile]]
     files: list[tuple[InputFile, str | None]]  # (file, optional filename override)
 
     def total(self) -> int:
@@ -85,20 +92,28 @@ async def _healthz(_request: web.Request) -> web.Response:
 
 
 async def _readyz(request: web.Request) -> web.Response:
-    """Readiness probe: the bot is up and its TrueConf link is alive."""
+    """Readiness probe: the bot is up and its TrueConf link is alive.
+
+    We rely on the library's own state flags `connected_event` and
+    `authorized_event` rather than poking the `_ws` object — the websockets
+    library's connection API has changed across versions and does not always
+    expose a reliable `.closed` attribute.
+    """
     holder: BotHolder = request.app["holder"]
     try:
         bot = holder.bot
     except RuntimeError:
         return web.json_response({"ready": False, "reason": "bot_not_initialized"}, status=503)
-    ws = getattr(bot, "_ws", None)
-    connected = ws is not None and not getattr(ws, "closed", True)
-    authorized = getattr(bot, "authorized_event", None)
-    auth_ok = bool(authorized and authorized.is_set())
-    if connected and auth_ok:
+
+    connected_event = getattr(bot, "connected_event", None)
+    authorized_event = getattr(bot, "authorized_event", None)
+    connected = bool(connected_event and connected_event.is_set())
+    authorized = bool(authorized_event and authorized_event.is_set())
+
+    if connected and authorized:
         return web.json_response({"ready": True})
     return web.json_response(
-        {"ready": False, "connected": connected, "authorized": auth_ok},
+        {"ready": False, "connected": connected, "authorized": authorized},
         status=503,
     )
 
@@ -156,8 +171,10 @@ async def _handle_incoming(request: web.Request) -> web.Response:
                 logger.warning("send_message failed for %s: %s", mask_token(token), exc)
                 delivery_errors.append(f"text: {type(exc).__name__}")
 
-        for index, image in enumerate(parsed.attachments.images):
-            error = await _send_photo(bot, hook.chat_id, image, parsed.parse_mode)
+        for index, (image_file, image_preview) in enumerate(parsed.attachments.images):
+            error = await _send_photo(
+                bot, hook.chat_id, image_file, image_preview, parsed.parse_mode,
+            )
             if error is not None:
                 delivery_errors.append(f"images[{index}]: {error}")
 
@@ -223,7 +240,7 @@ async def _parse_json(request: web.Request, limits: HttpLimits) -> _ParsedPayloa
     if len(images_raw) + len(files_raw) > limits.max_attachments:
         raise _PayloadError("too_many_attachments")
 
-    images: list[InputFile] = []
+    images: list[tuple[InputFile, InputFile]] = []
     for item in images_raw:
         if not isinstance(item, dict):
             raise _PayloadError("image_must_be_object")
@@ -231,7 +248,7 @@ async def _parse_json(request: web.Request, limits: HttpLimits) -> _ParsedPayloa
         if not isinstance(url, str) or not url:
             raise _PayloadError("image_url_required")
         _validate_or_raise(url)
-        images.append(URLInputFile(url=url))
+        images.append(_make_image_pair_from_url(url))
 
     files: list[tuple[InputFile, str | None]] = []
     for item in files_raw:
@@ -244,7 +261,7 @@ async def _parse_json(request: web.Request, limits: HttpLimits) -> _ParsedPayloa
         if filename is not None and not isinstance(filename, str):
             raise _PayloadError("filename_must_be_string")
         _validate_or_raise(url)
-        files.append((URLInputFile(url=url, filename=filename), filename))
+        files.append(_make_document_from_url(url, filename))
 
     return _ParsedPayload(
         text=text_value,
@@ -256,7 +273,7 @@ async def _parse_json(request: web.Request, limits: HttpLimits) -> _ParsedPayloa
 async def _parse_multipart(request: web.Request, limits: HttpLimits) -> _ParsedPayload:
     text_value: str | None = None
     parse_mode_raw: str | None = None
-    images: list[InputFile] = []
+    images: list[tuple[InputFile, InputFile]] = []
     files: list[tuple[InputFile, str | None]] = []
 
     reader = await request.multipart()
@@ -274,29 +291,26 @@ async def _parse_multipart(request: web.Request, limits: HttpLimits) -> _ParsedP
             if not url:
                 raise _PayloadError("image_url_required")
             _validate_or_raise(url)
-            images.append(URLInputFile(url=url))
+            images.append(_make_image_pair_from_url(url))
 
         elif name == "file_url":
             url = (await part.text()).strip()
             if not url:
                 raise _PayloadError("file_url_required")
             _validate_or_raise(url)
-            # In the URL form of a file the filename can only be forwarded via
-            # JSON; for multipart we rely on the URL or the upstream Content-Disposition.
-            files.append((URLInputFile(url=url), None))
+            files.append(_make_document_from_url(url, None))
 
         elif name == "image":
             data = await part.read(decode=False)
             if not data:
                 raise _PayloadError("image_empty")
-            filename = part.filename or "image"
-            images.append(BufferedInputFile(file=data, filename=filename))
+            images.append(_make_image_pair_from_bytes(data, part.filename or "image.jpg"))
 
         elif name == "file":
             data = await part.read(decode=False)
             if not data:
                 raise _PayloadError("file_empty")
-            filename = part.filename or "file"
+            filename = part.filename or "file.bin"
             files.append((BufferedInputFile(file=data, filename=filename), filename))
 
         else:
@@ -335,14 +349,62 @@ def _validate_or_raise(url: str) -> None:
         raise _PayloadError("unsafe_url") from exc
 
 
+def _make_image_pair_from_url(url: str) -> tuple[InputFile, InputFile]:
+    """Build `(file, preview)` for an image URL — the preview mirrors the file
+    so TrueConf clients render the image inline instead of as a generic file."""
+    fn = _filename_from_url(url, "image", ".jpg")
+    return URLInputFile(url=url, filename=fn), URLInputFile(url=url, filename=fn)
+
+
+def _make_image_pair_from_bytes(data: bytes, filename: str) -> tuple[InputFile, InputFile]:
+    """Same as `_make_image_pair_from_url` but for an in-memory multipart part."""
+    return (
+        BufferedInputFile(file=data, filename=filename),
+        BufferedInputFile(file=data, filename=filename),
+    )
+
+
+def _make_document_from_url(url: str, filename: str | None) -> tuple[InputFile, str]:
+    """Build an `InputFile` plus the effective filename for a document URL."""
+    effective_name = filename or _filename_from_url(url, "file", ".bin")
+    return URLInputFile(url=url, filename=effective_name), effective_name
+
+
+def _filename_from_url(url: str, default_stem: str, default_ext: str) -> str:
+    """Best-effort filename from a URL's path component.
+
+    python-trueconf-bot's `URLInputFile` constructor eagerly calls
+    `mimetypes.guess_type(filename)` and then `guess_extension(mime_type)`
+    in the base class; both crash on `None`. We therefore guarantee a
+    filename with a recognisable extension so `guess_type()` returns a type
+    and the second branch is never taken.
+    """
+    try:
+        parsed = urlparse(url)
+        # Percent-decode so names like `%D0%A4%D0%B0%D0%B9%D0%BB.pdf` come
+        # through as `Файл.pdf` instead of the raw encoded form.
+        candidate = unquote(PurePosixPath(parsed.path).name)
+    except Exception:
+        candidate = ""
+    if candidate and "." in candidate:
+        return candidate
+    return f"{default_stem}{default_ext}"
+
+
 # --- delivery ---------------------------------------------------------------
 
 
 async def _send_photo(
-    bot: Bot, chat_id: str, file: InputFile, parse_mode: ParseMode,
+    bot: Bot,
+    chat_id: str,
+    file: InputFile,
+    preview: InputFile,
+    parse_mode: ParseMode,
 ) -> str | None:
     try:
-        await bot.send_photo(chat_id=chat_id, file=file, preview=None, parse_mode=parse_mode)
+        await bot.send_photo(
+            chat_id=chat_id, file=file, preview=preview, parse_mode=parse_mode,
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:

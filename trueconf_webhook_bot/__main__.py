@@ -10,6 +10,7 @@ import sys
 
 from aiohttp import web
 from trueconf import Bot, Dispatcher
+from trueconf.utils.token import get_auth_token
 
 from .bot_holder import BotHolder
 from .config import Config, ConfigError, load_config
@@ -30,23 +31,35 @@ def _configure_logging() -> None:
 
 
 def _build_bot(config: Config, dispatcher: Dispatcher) -> Bot:
-    """Build a `Bot` instance according to the selected authentication mode."""
+    """Build a `Bot` instance according to the selected authentication mode.
+
+    We do not call `Bot.from_credentials()` because it hard-codes `protocol`
+    and `port` when calling the OAuth endpoint (uses `https://server:443`
+    regardless of the `https`/`web_port` arguments we pass). Instead we fetch
+    the token ourselves with the correct protocol/port and then construct
+    `Bot` directly.
+    """
     if config.trueconf_token is not None:
-        return Bot(
+        token = config.trueconf_token
+    else:
+        token = get_auth_token(
             server=config.trueconf_server,
-            token=config.trueconf_token,
-            web_port=config.trueconf_web_port,
-            https=True,
-            verify_ssl=config.trueconf_verify_ssl,
-            dispatcher=dispatcher,
+            username=config.trueconf_username or "",
+            password=config.trueconf_password or "",
+            verify=config.trueconf_verify_ssl,
+            protocol="https" if config.trueconf_https else "http",
+            port=config.trueconf_web_port,
         )
-    return Bot.from_credentials(
+        if not token:
+            raise RuntimeError("TrueConf OAuth endpoint did not return an access_token")
+
+    return Bot(
         server=config.trueconf_server,
-        username=config.trueconf_username or "",
-        password=config.trueconf_password or "",
-        dispatcher=dispatcher,
-        verify_ssl=config.trueconf_verify_ssl,
+        token=token,
         web_port=config.trueconf_web_port,
+        https=config.trueconf_https,
+        verify_ssl=config.trueconf_verify_ssl,
+        dispatcher=dispatcher,
     )
 
 

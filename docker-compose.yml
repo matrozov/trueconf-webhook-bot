@@ -16,6 +16,13 @@ services:
       TRUECONF_USERNAME: webhook_bot
       TRUECONF_PASSWORD: change_me
 
+      # Defaults to TRUECONF_USERNAME. Set explicitly if you authenticate with
+      # a pre-issued TRUECONF_TOKEN or if the bot's login differs.
+      # TRUECONF_BOT_USERNAME: webhook_bot
+
+      # HTTPS is the default; set to "false" only when bot and TrueConf Server
+      # share a trusted network. Plain HTTP leaks credentials in the clear.
+      TRUECONF_HTTPS: "true"
       TRUECONF_VERIFY_SSL: "true"
       TRUECONF_WEB_PORT: "443"
 

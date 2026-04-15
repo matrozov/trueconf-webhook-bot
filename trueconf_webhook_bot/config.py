@@ -39,7 +39,9 @@ class Config:
     trueconf_token: str | None
     trueconf_username: str | None
     trueconf_password: str | None
+    trueconf_bot_username: str | None
     trueconf_verify_ssl: bool
+    trueconf_https: bool
     trueconf_web_port: int
     webhook_public_url: str
     webhook_http_host: str
@@ -126,6 +128,14 @@ def load_config(env_path: Path | None = None) -> Config:
                 "the pair TRUECONF_USERNAME + TRUECONF_PASSWORD."
             )
 
+    # Bot's own TrueConf login; needed to tell apart a self-mention from a
+    # mention of some other user in group chats. Defaults to TRUECONF_USERNAME
+    # (when using login/password); in token-only mode set it explicitly.
+    bot_username = os.getenv("TRUECONF_BOT_USERNAME")
+    bot_username = bot_username.strip() if bot_username else None
+    if not bot_username:
+        bot_username = username
+
     public_url = _require(os.getenv("WEBHOOK_PUBLIC_URL"), "WEBHOOK_PUBLIC_URL").rstrip("/")
 
     storage_raw = os.getenv("WEBHOOK_STORAGE_PATH") or "data/webhooks.json"
@@ -136,7 +146,9 @@ def load_config(env_path: Path | None = None) -> Config:
         trueconf_token=token,
         trueconf_username=username,
         trueconf_password=password,
+        trueconf_bot_username=bot_username,
         trueconf_verify_ssl=_parse_bool(os.getenv("TRUECONF_VERIFY_SSL"), default=True),
+        trueconf_https=_parse_bool(os.getenv("TRUECONF_HTTPS"), default=True),
         trueconf_web_port=_parse_int(os.getenv("TRUECONF_WEB_PORT"), 443, "TRUECONF_WEB_PORT"),
         webhook_public_url=public_url,
         webhook_http_host=os.getenv("WEBHOOK_HTTP_HOST") or "0.0.0.0",

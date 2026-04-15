@@ -10,6 +10,8 @@ incoming webhook for TrueConf.
 ## Features
 
 - Commands `/webhook_create`, `/webhook_list`, `/webhook_revoke` right in chat.
+  In group chats and channels the command must be addressed to the bot
+  (`@bot /webhook_list`); in personal and favorites chats the mention is optional.
 - The full URL is delivered in a direct message to the author, so the secret
   never appears in the group chat history.
 - `/webhook_list` always shows a masked token (`abcd…wxyz`).
@@ -60,6 +62,7 @@ python -m trueconf_webhook_bot
 | `TRUECONF_SERVER` | yes | — |
 | `TRUECONF_TOKEN` | one of the auth options | — |
 | `TRUECONF_USERNAME` + `TRUECONF_PASSWORD` | one of the auth options | — |
+| `TRUECONF_HTTPS` | no | `true` |
 | `TRUECONF_VERIFY_SSL` | no | `true` |
 | `TRUECONF_WEB_PORT` | no | `443` |
 | `WEBHOOK_PUBLIC_URL` | yes | — |

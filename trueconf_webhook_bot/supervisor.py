@@ -169,6 +169,7 @@ class BotSupervisor:
                 username=self._config.trueconf_username,
                 password=self._config.trueconf_password,
                 verify=self._config.trueconf_verify_ssl,
+                protocol="https" if self._config.trueconf_https else "http",
                 port=self._config.trueconf_web_port,
             ),
         )

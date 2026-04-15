@@ -12,6 +12,11 @@ CLAUDE.md itself are in English. The only Russian file in the project is
 
 ### Chat commands
 
+In group chats and channels commands must be addressed to the bot
+(`@bot /webhook_list`) — a leading mention is required so an unrelated
+participant typing a line starting with `/...` does not accidentally
+trigger the bot. In P2P and Favorites chats the mention is optional.
+
 - `/webhook_create <name>` — create a new webhook with the given name.
   - Name is required and unique within a chat.
   - The full URL is delivered **in a direct message** to the initiator via
@@ -200,8 +205,10 @@ README-ru.md
 - `TRUECONF_SERVER` — server address (`video.example.com`).
 - `TRUECONF_TOKEN` — ready JWT (optional).
 - `TRUECONF_USERNAME`, `TRUECONF_PASSWORD` — for `from_credentials`.
-- `TRUECONF_VERIFY_SSL` — `true`/`false` (default `true`).
-- `TRUECONF_WEB_PORT` — WebSocket port (default `443`).
+- `TRUECONF_HTTPS` — `true`/`false` (default `true`). Set to `false` only on a
+  trusted network; plain HTTP leaks credentials.
+- `TRUECONF_VERIFY_SSL` — `true`/`false` (default `true`). Ignored when HTTPS is off.
+- `TRUECONF_WEB_PORT` — WebSocket port (default `443`; use `80` with HTTPS off).
 - `WEBHOOK_PUBLIC_URL` — public base URL (`https://bot.example.com`).
 - `WEBHOOK_HTTP_HOST`, `WEBHOOK_HTTP_PORT` — listen address (default `0.0.0.0:8080`).
 - `WEBHOOK_STORAGE_PATH` — path to the JSON file (default `data/webhooks.json`).
