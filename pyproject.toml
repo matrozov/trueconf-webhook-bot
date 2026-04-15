@@ -1,0 +1,26 @@
+[project]
+name = "trueconf-webhook-bot"
+version = "0.1.0"
+description = "Incoming webhook bot for TrueConf Server chats"
+requires-python = ">=3.10"
+dependencies = [
+    # 1.2.0bX требуется для TrueConf Server 5.5.3+ (ветка 1.1.x работает только
+    # со старыми версиями сервера). Стабильного релиза 1.2 пока нет — используем
+    # предрелиз; верхний потолок защищает от breaking change в 2.x.
+    "python-trueconf-bot>=1.2.0b3,<2.0",
+    "aiohttp>=3.9,<4.0",
+    "python-dotenv>=1.0,<2.0",
+    # httpx закреплён на стабильной 0.x: 1.0.dev несовместим с
+    # python-trueconf-bot 1.2.0b3 (перенесён httpx.AsyncClient).
+    "httpx>=0.24,<1.0",
+]
+
+[project.scripts]
+trueconf-webhook-bot = "trueconf_webhook_bot.__main__:cli"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["trueconf_webhook_bot*"]

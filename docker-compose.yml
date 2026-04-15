@@ -1,0 +1,56 @@
+services:
+  trueconf-webhook-bot:
+    build: .
+    image: trueconf-webhook-bot:latest
+    container_name: trueconf-webhook-bot
+    restart: unless-stopped
+    environment:
+      # --- TrueConf Server ---
+      TRUECONF_SERVER: video.example.com
+
+      # Authentication: either a ready JWT, or a bot account login/password.
+      # TRUECONF_TOKEN takes priority; when set, username/password are ignored.
+      # Sensitive values should be passed in via shell/CI:
+      #   TRUECONF_PASSWORD: ${TRUECONF_PASSWORD}
+      # TRUECONF_TOKEN: ""
+      TRUECONF_USERNAME: webhook_bot
+      TRUECONF_PASSWORD: change_me
+
+      TRUECONF_VERIFY_SSL: "true"
+      TRUECONF_WEB_PORT: "443"
+
+      # --- Webhook service ---
+      # Public URL external services POST to (/hook/<token>).
+      WEBHOOK_PUBLIC_URL: https://bot.example.com
+
+      # Inside the container we listen on 0.0.0.0:8080; expose via ports below.
+      WEBHOOK_HTTP_HOST: 0.0.0.0
+      WEBHOOK_HTTP_PORT: "8080"
+
+      # Path inside the container; the actual location is the webhook-data volume.
+      WEBHOOK_STORAGE_PATH: /app/data/webhooks.json
+
+      WEBHOOK_ADMIN_ONLY: "true"
+      WEBHOOK_RATE_LIMIT_PER_MINUTE: "60"
+      WEBHOOK_RATE_LIMIT_PER_IP_PER_MINUTE: "120"
+      WEBHOOK_MAX_UPLOAD_MB: "25"
+      WEBHOOK_MAX_ATTACHMENTS: "10"
+    ports:
+      # By default bind to loopback — a TLS-terminating reverse proxy is expected
+      # in front of the container. Replace with "8080:8080" for direct exposure.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - webhook-data:/app/data
+    healthcheck:
+      # /readyz verifies that the bot is connected to TrueConf and authorized;
+      # on transient disconnects the container becomes (unhealthy), but Docker
+      # does not restart it on its own — the signal is just for operators / orchestrators.
+      # start_period covers WS handshake + OAuth on startup.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  webhook-data:
