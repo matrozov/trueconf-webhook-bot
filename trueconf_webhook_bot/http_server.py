@@ -28,6 +28,7 @@ from trueconf.enums import ParseMode
 from trueconf.types.input_file import BufferedInputFile, InputFile, URLInputFile
 
 from .bot_holder import BotHolder
+from .image_preview import fetch_for_preview, make_thumbnail, preview_filename
 from .rate_limit import SlidingWindowRateLimiter
 from .storage import WebhookStorage
 from .url_guard import InvalidAttachmentUrl, validate_public_url
@@ -54,9 +55,11 @@ class HttpLimits:
 class _Attachments:
     """Intermediate representation of the attachments to send.
 
-    Each image is a `(file, preview)` pair. For now both point at the same
-    payload — TrueConf clients render photos inline only when a preview is
-    attached. See CLAUDE.md for the planned upgrade to real thumbnails.
+    Each image is a `(file, preview)` pair. The preview is a small JPEG
+    thumbnail derived from the source so TrueConf clients render the photo
+    inline; without a preview the photo would render as a generic file.
+    When thumbnail generation fails (unrecognised image, network error)
+    the preview falls back to the same payload as the file.
     """
 
     images: list[tuple[InputFile, InputFile]]
@@ -248,7 +251,9 @@ async def _parse_json(request: web.Request, limits: HttpLimits) -> _ParsedPayloa
         if not isinstance(url, str) or not url:
             raise _PayloadError("image_url_required")
         _validate_or_raise(url)
-        images.append(_make_image_pair_from_url(url))
+        images.append(
+            await _make_image_pair_from_url(url, max_bytes=limits.max_upload_bytes)
+        )
 
     files: list[tuple[InputFile, str | None]] = []
     for item in files_raw:
@@ -291,7 +296,9 @@ async def _parse_multipart(request: web.Request, limits: HttpLimits) -> _ParsedP
             if not url:
                 raise _PayloadError("image_url_required")
             _validate_or_raise(url)
-            images.append(_make_image_pair_from_url(url))
+            images.append(
+                await _make_image_pair_from_url(url, max_bytes=limits.max_upload_bytes)
+            )
 
         elif name == "file_url":
             url = (await part.text()).strip()
@@ -349,19 +356,46 @@ def _validate_or_raise(url: str) -> None:
         raise _PayloadError("unsafe_url") from exc
 
 
-def _make_image_pair_from_url(url: str) -> tuple[InputFile, InputFile]:
-    """Build `(file, preview)` for an image URL — the preview mirrors the file
-    so TrueConf clients render the image inline instead of as a generic file."""
+async def _make_image_pair_from_url(
+    url: str, *, max_bytes: int
+) -> tuple[InputFile, InputFile]:
+    """Build `(file, preview)` for an image URL.
+
+    The file itself stays a `URLInputFile` so TrueConf streams the original
+    image directly from the source. The preview is a compact JPEG generated
+    on the bot side — see `image_preview` for why a real thumbnail beats
+    duplicating the URL. If the source cannot be fetched or decoded the
+    preview falls back to the URL itself, which still triggers inline
+    rendering at the cost of double bandwidth.
+    """
     fn = _filename_from_url(url, "image", ".jpg")
-    return URLInputFile(url=url, filename=fn), URLInputFile(url=url, filename=fn)
+    file = URLInputFile(url=url, filename=fn)
+
+    source_bytes = await fetch_for_preview(url, max_bytes=max_bytes)
+    if source_bytes is not None:
+        thumbnail = make_thumbnail(source_bytes)
+        if thumbnail is not None:
+            preview = BufferedInputFile(file=thumbnail, filename=preview_filename())
+            return file, preview
+
+    return file, URLInputFile(url=url, filename=fn)
 
 
 def _make_image_pair_from_bytes(data: bytes, filename: str) -> tuple[InputFile, InputFile]:
-    """Same as `_make_image_pair_from_url` but for an in-memory multipart part."""
-    return (
-        BufferedInputFile(file=data, filename=filename),
-        BufferedInputFile(file=data, filename=filename),
-    )
+    """Build `(file, preview)` for an in-memory multipart upload.
+
+    The original bytes are sent as the file unchanged; the preview is a
+    locally-generated JPEG thumbnail. On encoder failure the preview
+    falls back to a copy of the original buffer so inline rendering still
+    works (at the cost of doubling the upload size on the wire).
+    """
+    file = BufferedInputFile(file=data, filename=filename)
+    thumbnail = make_thumbnail(data)
+    if thumbnail is not None:
+        preview = BufferedInputFile(file=thumbnail, filename=preview_filename())
+    else:
+        preview = BufferedInputFile(file=data, filename=filename)
+    return file, preview
 
 
 def _make_document_from_url(url: str, filename: str | None) -> tuple[InputFile, str]:

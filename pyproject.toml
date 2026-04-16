@@ -4,15 +4,19 @@ version = "0.1.0"
 description = "Incoming webhook bot for TrueConf Server chats"
 requires-python = ">=3.10"
 dependencies = [
-    # 1.2.0bX требуется для TrueConf Server 5.5.3+ (ветка 1.1.x работает только
-    # со старыми версиями сервера). Стабильного релиза 1.2 пока нет — используем
-    # предрелиз; верхний потолок защищает от breaking change в 2.x.
+    # 1.2.0bX is required for TrueConf Server 5.5.3+; the 1.1.x branch only
+    # works against older servers. There is no stable 1.2 release yet, so we
+    # pin the pre-release; the upper bound guards against 2.x breaking changes.
     "python-trueconf-bot>=1.2.0b3,<2.0",
     "aiohttp>=3.9,<4.0",
     "python-dotenv>=1.0,<2.0",
-    # httpx закреплён на стабильной 0.x: 1.0.dev несовместим с
-    # python-trueconf-bot 1.2.0b3 (перенесён httpx.AsyncClient).
+    # httpx is pinned to the stable 0.x line: 1.0.dev is incompatible with
+    # python-trueconf-bot 1.2.0b3 (httpx.AsyncClient was relocated).
     "httpx>=0.24,<1.0",
+    # Pillow generates the small JPEG previews attached to outgoing photos.
+    # Without a preview TrueConf clients render images as generic files;
+    # with preview=source they spend twice the bandwidth.
+    "Pillow>=10.4,<13.0",
 ]
 
 [project.scripts]
